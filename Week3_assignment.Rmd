@@ -1,0 +1,287 @@
+---
+title: "Week3 Assignment Continued"
+author: "J. Imamura"
+date: "2/13/2022"
+output: rmarkdown::github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(randomForest)
+library(caret)
+```
+
+## Project Data
+To access the files for the project in this module, go to https://catalog.data.gov/dataset  and find the dataset titled NYPD Shooting Incident Data (Historic).  Right click on the CSV button and copy the link address.  You will then put this link address into your Rmd when you are reading in the dataset.  This project will be built up over the week and will be peer-reviewed as part of your grade at the end of the week.
+
+
+### Summary of the data
+Description of the data is available here:
+https://data.cityofnewyork.us/Public-Safety/NYPD-Shooting-Incident-Data-Historic-/833y-fsy8
+
+And we can see that there are various information:
+
+* date and time
+* borough and where
+* age group, race, sex of victim and perpetrator
+
+```{r step1_import_data, message=FALSE}
+shooting_data <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv")
+population_boro <- read_csv("https://data.cityofnewyork.us/api/views/xi7c-iiu2/rows.csv")
+summary(shooting_data)
+```
+
+***
+
+## Tweak data for further investigation
+I'd like to look in detail about "when" the incident occured. To split into YMDhms, I firstly mutated string to dates
+
+```{r data_manipulatino}
+shooting_data <- shooting_data %>%
+                   mutate(OCCUR_DATE=mdy(OCCUR_DATE))
+```
+
+***
+
+## Visualize data
+
+### Overview
+Let's see which borough is the worst safety. I took population info.
+
+```{r poluration_info}
+population_boro <- population_boro %>% 
+                      group_by(Borough) %>% 
+                      summarize(`Population`=sum(`2010 Population`)) %>%
+                      rename(BORO = "Borough") %>%
+                      mutate(BORO = toupper(BORO))
+```
+
+And then joined into the original data. We can see that Bronx is the worst safety area in terms of the number of incidents per capita.
+
+```{r shooting_per_borough_capita}
+shooting_data %>%
+    group_by(BORO) %>%
+    summarize(count = n()) %>%
+    left_join(population_boro, by="BORO") %>%
+    mutate(shoot_per_capita = count/Population) %>%
+    ggplot(aes(x=BORO, y=count)) +
+    geom_bar(stat="identity") +
+    geom_point(aes(x=BORO, y=shoot_per_capita*3000000), colour="red") +
+    scale_y_continuous(sec.axis=sec_axis(~(./3000000), name="counts per capita")) +
+    theme(legend.position = "bottom", axis.text.x=element_text(angle=90)) +
+    labs(title = "shooting incident per borough per capita", y = NULL)
+```  
+
+
+### Location vs Time
+Next, let's see time-wise incident statistics for each borough.
+
+Below is the number of per-year incidents. As the graph suggests, incidents are suddenly increased from 2020. I'm not an U.S. residents, but I heard that public order is deteriorated due to COVID19. This may show this fact.
+
+```{r shooting_per_year}
+shooting_data %>%
+    mutate(OCCUR_YEAR=year(OCCUR_DATE)) %>%
+    group_by(OCCUR_YEAR, BORO) %>%
+    summarize(count = n()) %>%
+    ggplot(aes(x=OCCUR_YEAR, y=count)) +
+    geom_line(aes(color=BORO)) +
+    geom_point(aes(color=BORO)) +
+    theme(legend.position = "bottom", axis.text.x=element_text(angle=90)) +
+    labs(title = "shooting incident per year", y = NULL)
+```
+
+Below is the number of per-month incidents. It looks that incidents occur mostly in the summertime.
+```{r shooting_per_month}
+shooting_data %>%
+    mutate(OCCUR_MONTH=month(OCCUR_DATE)) %>%
+    group_by(OCCUR_MONTH, BORO) %>%
+    summarize(count = n()) %>%
+    ggplot(aes(x=OCCUR_MONTH, y=count)) +
+    geom_line(aes(color=BORO)) +
+    geom_point(aes(color=BORO)) +
+    theme(legend.position = "bottom", axis.text.x=element_text(angle=90)) +
+    labs(title = "shooting incident per month", y = NULL)
+```
+
+Below is the number of per-wday incidents. It looks that incidents occur mostly in the weekend
+```{r shooting_per_wday}
+shooting_data %>%
+    mutate(OCCUR_WDAY=wday(OCCUR_DATE)) %>%
+    group_by(OCCUR_WDAY, BORO) %>%
+    summarize(count = n()) %>%
+    ggplot(aes(x=OCCUR_WDAY, y=count)) +
+    geom_line(aes(color=BORO)) +
+    geom_point(aes(color=BORO)) +
+    theme(legend.position = "bottom", axis.text.x=element_text(angle=90)) +
+    labs(title = "shooting incident per weekday", y = NULL)
+```
+
+Below is the number of per-hour incidents. It looks that incidents occur mostly in the nighttime
+```{r shooting_per_hour}
+shooting_data %>%
+    mutate(OCCUR_HOUR=hour(hms(OCCUR_TIME))) %>%
+    group_by(OCCUR_HOUR, BORO) %>%
+    summarize(count = n()) %>%
+    ggplot(aes(x=OCCUR_HOUR, y=count)) +
+    geom_line(aes(color=BORO)) +
+    geom_point(aes(color=BORO)) +
+    theme(legend.position = "bottom", axis.text.x=element_text(angle=90)) +
+    labs(title = "shooting incident per hour", y = NULL)
+```
+
+### Location vs Demographics
+Then, let's see demographics-wise incident statistics for each borough.
+
+Below is the statistics based on victim race. As we can see, black people were victim for majority of the number of incidents. And location-wise distribution is quite similar to the entire statistics shown in the overview.
+
+```{r victim_race_borough}
+shooting_data %>%
+  group_by(VIC_RACE, BORO) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  ggplot(aes(x=VIC_RACE, y=count, fill=BORO)) +
+  geom_bar(stat="identity", position='dodge') +
+  theme(legend.position = "bottom", axis.text.x=element_text(angle=90)) +
+  labs(title = "victim race vs borough", y = NULL)
+```
+
+Next is the statistics based on suspects race. And basically the same impression as above.
+
+```{r suspect_race_borough}
+shooting_data %>%
+  group_by(PERP_RACE, BORO) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  ggplot(aes(x=PERP_RACE, y=count, fill=BORO)) +
+  geom_bar(stat="identity", position='dodge') +
+  theme(legend.position = "bottom", axis.text.x=element_text(angle=90)) +
+  labs(title = "suspects race vs borough", y = NULL)
+```
+
+Next is the statistics based on victim age group. Youngest age group has slightly different tendency, but vast majority of the age groups has quite similar distribution as the entire statistics.
+
+```{r victim_age_borough}
+shooting_data %>%
+  group_by(VIC_AGE_GROUP, BORO) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  ggplot(aes(x=VIC_AGE_GROUP, y=count, fill=BORO)) +
+  geom_bar(stat="identity", position='dodge') +
+  theme(legend.position = "bottom", axis.text.x=element_text(angle=90)) +
+  labs(title = "victim age group vs borough", y = NULL)
+```
+
+At last, this is the statistics based on suspects age group.And basically the same implression as above.
+
+```{r suspect_age_borough}
+shooting_data %>%
+  group_by(PERP_AGE_GROUP, BORO) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  ggplot(aes(x=PERP_AGE_GROUP, y=count, fill=BORO)) +
+  geom_bar(stat="identity", position='dodge') +
+  theme(legend.position = "bottom", axis.text.x=element_text(angle=90)) +
+  labs(title = "suspects age group vs borough", y = NULL)
+```
+
+***
+
+## Build Model
+Here I made some model to predict which borough the incident happened from time or demographic information.
+
+As you can see in the table below, naive prediction is to predict all result as the most frequent borough, BRONX. In this case, True Positive rate will be 0.4.
+
+```{r prop_table}
+shooting_data_ <- shooting_data[complete.cases(shooting_data),]
+round(prop.table(table(shooting_data_$BORO)*100), digits = 2)
+```
+
+### Model1
+#### Model1 train
+In the first model, I used race/rage/sex information.
+
+`select(c(STATISTICAL_MURDER_FLAG, BORO, PERP_AGE_GROUP, PERP_RACE, PERP_SEX, VIC_AGE_GROUP, VIC_SEX, VIC_RACE))`
+
+```{r model1}
+set.seed(1234)
+shooting_data_ <- shooting_data_ %>% 
+    mutate(STATISTICAL_MURDER_FLAG = as.factor(STATISTICAL_MURDER_FLAG)) %>%
+    mutate(BORO = as.factor(BORO)) %>%
+    mutate(OCCUR_YEAR=year(OCCUR_DATE)) %>%
+    mutate(OCCUR_MONTH=month(OCCUR_DATE)) %>%
+    mutate(OCCUR_WDAY=wday(OCCUR_DATE)) %>%
+    mutate(OCCUR_HOUR=hour(hms(OCCUR_TIME))) %>%
+    mutate(PERP_AGE_GROUP=as.factor(PERP_AGE_GROUP)) %>%
+    mutate(PERP_RACE=as.factor(PERP_RACE)) %>%
+    mutate(PERP_SEX=as.factor(PERP_SEX)) %>%
+    mutate(VIC_AGE_GROUP=as.factor(VIC_AGE_GROUP)) %>%
+    mutate(VIC_SEX=as.factor(VIC_SEX)) %>%
+    mutate(VIC_RACE=as.factor(VIC_RACE)) %>%
+    select(c(STATISTICAL_MURDER_FLAG, BORO, PERP_AGE_GROUP, PERP_RACE, PERP_SEX, VIC_AGE_GROUP, VIC_SEX, VIC_RACE))
+inTrain <- createDataPartition(shooting_data_$BORO, times = 1, p = 0.8, list = FALSE)
+train_eval = shooting_data_[inTrain,]
+test_eval = shooting_data_[-inTrain,]
+
+
+```
+
+#### Model1 predict
+Result is a bit better than naiive prediction, but still not so different. Prediction against Manhattan, Queens, Staten Island are almost failed even in the training phase.
+
+```{r train_and_predict1}
+set.seed(1234)
+DT_model <- randomForest(BORO ~., data = train_eval, keep.forest=TRUE, ntree=100, method = "response")
+print(DT_model)
+DT_Pred <- predict(DT_model, newdata = test_eval, type = "response")
+sum(DT_Pred == test_eval$BORO)/length(DT_Pred)
+```
+
+### Model2
+#### Model2 train
+In the second model, I used datetime information.
+
+`select(c(STATISTICAL_MURDER_FLAG, OCCUR_YEAR, OCCUR_MONTH, OCCUR_WDAY, OCCUR_HOUR, BORO))`
+
+
+```{r model2}
+set.seed(1234)
+shooting_data_ <- shooting_data[complete.cases(shooting_data),]
+shooting_data_ <- shooting_data_ %>% 
+    mutate(STATISTICAL_MURDER_FLAG = as.factor(STATISTICAL_MURDER_FLAG)) %>%
+    mutate(BORO = as.factor(BORO)) %>%
+    mutate(OCCUR_YEAR=year(OCCUR_DATE)) %>%
+    mutate(OCCUR_MONTH=month(OCCUR_DATE)) %>%
+    mutate(OCCUR_WDAY=wday(OCCUR_DATE)) %>%
+    mutate(OCCUR_HOUR=hour(hms(OCCUR_TIME))) %>%
+    mutate(PERP_AGE_GROUP=as.factor(PERP_AGE_GROUP)) %>%
+    mutate(PERP_RACE=as.factor(PERP_RACE)) %>%
+    mutate(PERP_SEX=as.factor(PERP_SEX)) %>%
+    mutate(VIC_AGE_GROUP=as.factor(VIC_AGE_GROUP)) %>%
+    mutate(VIC_SEX=as.factor(VIC_SEX)) %>%
+    mutate(VIC_RACE=as.factor(VIC_RACE)) %>%
+    select(c(STATISTICAL_MURDER_FLAG, OCCUR_YEAR, OCCUR_MONTH, OCCUR_WDAY, OCCUR_HOUR, BORO))
+inTrain <- createDataPartition(shooting_data_$BORO, times = 1, p = 0.8, list = FALSE)
+train_eval = shooting_data_[inTrain,]
+test_eval = shooting_data_[-inTrain,]
+```
+
+#### Model2 predict
+Result is even better than model1. It's not easy to conclude with this level of accuracy, but it looks that when incident occured has some special characteristics and this enabled correct prediction of Manhattan, Queens, Staten Island.
+
+```{r train_and_predict2}
+set.seed(1234)
+DT_model <- randomForest(BORO ~., data = train_eval, keep.forest=TRUE, ntree=100, method = "response")
+print(DT_model)
+DT_Pred <- predict(DT_model, newdata = test_eval, type = "response")
+sum(DT_Pred == test_eval$BORO)/length(DT_Pred)
+```
+
+***
+
+## Conclusion
+In this report, I've done short analysis on shooting incident dataset in the New York city.
+And time-wise statistics gives more insight on predicting the location of an incident than demographic information.
+
+Maybe this is because there are differences in flow of people for each borough and then the time when the incident occurr gave more insight.
